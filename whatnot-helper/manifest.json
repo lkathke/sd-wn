@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Whatnot Live Helper",
+  "version": "0.1.0",
+  "host_permissions": ["https://www.whatnot.com/*"],
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.whatnot.com/*/dashboard/live/*"],
+      "js": ["src/bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.whatnot.com/*/dashboard/live/*"],
+      "js": ["src/overlay.js"],
+      "run_at": "document_idle",
+      "world": "ISOLATED"
+    }
+  ]
+}

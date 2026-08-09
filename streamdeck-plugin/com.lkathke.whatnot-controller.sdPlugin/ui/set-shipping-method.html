@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+
+<head lang="en">
+    <title>Set Shipping Method Settings</title>
+    <meta charset="utf-8" />
+    <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+</head>
+
+<body>
+    <!--
+        Learn more about property inspector components at https://sdpi-components.dev/docs/components
+    -->
+    <sdpi-item label="Anwenden auf">
+        <sdpi-select setting="target" default="auction">
+            <option value="auction">Auktionsartikel</option>
+            <option value="giveaway">Giveaway-Artikel</option>
+        </sdpi-select>
+    </sdpi-item>
+    <sdpi-item label="Shipping Method">
+        <sdpi-select id="shippingMethodSelect" setting="shippingMethod" default="Standard Shipping">
+            <option value="Standard Shipping">Standard Shipping</option>
+            <option value="Free Shipping">Free Shipping</option>
+            <option value="Calculated Shipping">Calculated Shipping</option>
+            <option value="Local Pickup">Local Pickup</option>
+        </sdpi-select>
+    </sdpi-item>
+    <sdpi-item label="Or Custom Label">
+        <sdpi-textfield setting="customLabel" placeholder="leave empty to use dropdown value"></sdpi-textfield>
+    </sdpi-item>
+    <sdpi-item label="Background Color">
+        <sdpi-color setting="bgColor" default="#2d3138"></sdpi-color>
+    </sdpi-item>
+    <sdpi-item label="Text Color">
+        <sdpi-color setting="textColor" default="#ffffff"></sdpi-color>
+    </sdpi-item>
+    <sdpi-item id="liveStatus" label=" ">
+        <span>Lade echte Versandprofile …</span>
+    </sdpi-item>
+
+    <script>
+        // Ersetzt die geratene Options-Liste oben durch die tatsächlich im Whatnot-Account
+        // konfigurierten Versandprofile, sobald das Plugin sie über die Chrome Extension
+        // besorgt hat (siehe SetShippingMethod.onSendToPlugin im Plugin-Code). Schlägt das fehl
+        // (keine Extension verbunden, kein aktives Live-Dashboard offen), bleibt die statische
+        // Liste oben als Fallback stehen.
+        (function () {
+            function applyProfiles(profiles) {
+                if (!Array.isArray(profiles) || profiles.length === 0) return;
+                const select = document.getElementById('shippingMethodSelect');
+                const current = select.value;
+                select.innerHTML = profiles
+                    .map((p) => `<option value="${p.name}">${p.name}</option>`)
+                    .join('');
+                if (profiles.some((p) => p.name === current)) {
+                    select.value = current;
+                }
+                document.getElementById('liveStatus').querySelector('span').textContent =
+                    `${profiles.length} echte Versandprofile geladen ✓`;
+            }
+
+            function showError(message) {
+                document.getElementById('liveStatus').querySelector('span').textContent =
+                    `Konnte echte Profile nicht laden (${message}) – Fallback-Liste aktiv`;
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+                if (!window.SDPIComponents) return;
+                const { streamDeckClient } = SDPIComponents;
+
+                streamDeckClient.sendToPropertyInspector.subscribe((ev) => {
+                    const payload = ev?.payload ?? ev;
+                    if (payload?.event !== 'getShippingProfiles') return;
+                    if (payload.error) {
+                        showError(payload.error);
+                    } else {
+                        applyProfiles(payload.profiles);
+                    }
+                });
+
+                streamDeckClient.send('sendToPlugin', { event: 'getShippingProfiles' });
+            });
+        })();
+    </script>
+</body>
+
+</html>

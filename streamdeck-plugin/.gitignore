@@ -1,0 +1,7 @@
+# Node.js
+node_modules/
+
+# Stream Deck files
+# bin/ (compiled plugin.js) is intentionally NOT ignored — committed so the repo can be deployed
+# to another machine without running npm install/build there first.
+*.sdPlugin/logs

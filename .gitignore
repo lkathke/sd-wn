@@ -1,0 +1,8 @@
+# Node.js
+node_modules/
+
+# Personal/local Claude Code settings — not meant to be shared
+.claude/settings.local.json
+
+# Stream Deck runtime logs
+*.sdPlugin/logs

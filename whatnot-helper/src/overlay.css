@@ -1,0 +1,6 @@
+/*
+ * Bewusst leer: das Overlay rendert sich in einem Shadow DOM (siehe overlay.js)
+ * und bringt sein Styling per <style>-Tag selbst mit, damit Whatnots eigenes
+ * Tailwind-CSS nicht hineinwirkt und umgekehrt. Diese Datei existiert nur,
+ * weil manifest.json ein content_scripts.css-Feld erwartet.
+ */

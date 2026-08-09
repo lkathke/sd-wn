@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+
+<head lang="en">
+    <title>Current Shipping Display Settings</title>
+    <meta charset="utf-8" />
+    <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+    <style>
+        .order-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 0;
+            border-bottom: 1px solid #333a44;
+        }
+
+        .order-row span {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .order-row button {
+            min-width: 26px;
+        }
+
+        .order-row.disabled span {
+            opacity: 0.5;
+            text-decoration: line-through;
+        }
+    </style>
+</head>
+
+<body>
+    <sdpi-item label="Anwenden auf">
+        <sdpi-select setting="target" default="auction">
+            <option value="auction">Auktionsartikel</option>
+            <option value="giveaway">Giveaway-Artikel</option>
+        </sdpi-select>
+    </sdpi-item>
+    <sdpi-item label="Default Shipping Method">
+        <sdpi-select id="defaultShippingSelect" setting="defaultShippingLabel" default="Standard Shipping">
+            <option value="Standard Shipping">Standard Shipping</option>
+            <option value="Free Shipping">Free Shipping</option>
+            <option value="Calculated Shipping">Calculated Shipping</option>
+            <option value="Local Pickup">Local Pickup</option>
+        </sdpi-select>
+    </sdpi-item>
+    <sdpi-item id="liveStatus" label=" ">
+        <span>Lade echte Versandprofile …</span>
+    </sdpi-item>
+    <sdpi-item label=" ">
+        <span>
+            Zeigt die aktuell gewählte Versandart (des oben gewählten Artikeltyps) live an und
+            blinkt kurz rot auf, wenn sie sich ändert. Ein Druck auf diese Taste selbst setzt die
+            Versandart auf den oben eingestellten Standardwert zurück.
+        </span>
+    </sdpi-item>
+
+    <sdpi-item label="Adjust-Reihenfolge">
+        <div id="orderList" style="display:flex; flex-direction:column; width:100%;"></div>
+    </sdpi-item>
+    <sdpi-item label=" ">
+        <span>
+            Legt fest, in welcher Reihenfolge und mit welchen Profilen die "Adjust Shipping
+            Method" ◀/▶-Tasten durchschalten. Deaktivierte Profile werden übersprungen. Änderungen
+            werden sofort gespeichert.
+        </span>
+    </sdpi-item>
+
+    <script>
+        (function () {
+            function applyProfiles(profiles) {
+                if (!Array.isArray(profiles) || profiles.length === 0) return;
+                const select = document.getElementById('defaultShippingSelect');
+                const current = select.value;
+                select.innerHTML = profiles
+                    .map((p) => `<option value="${p.name}">${p.name}</option>`)
+                    .join('');
+                if (profiles.some((p) => p.name === current)) {
+                    select.value = current;
+                }
+                document.getElementById('liveStatus').querySelector('span').textContent =
+                    `${profiles.length} echte Versandprofile geladen ✓`;
+            }
+
+            function showError(message) {
+                document.getElementById('liveStatus').querySelector('span').textContent =
+                    `Konnte echte Profile nicht laden (${message}) – Fallback-Liste aktiv`;
+            }
+
+            let order = [];
+            let streamDeckClient;
+
+            function renderOrderList() {
+                const container = document.getElementById('orderList');
+                container.innerHTML = order.map((entry, i) => `
+                    <div class="order-row${entry.enabled ? '' : ' disabled'}" data-index="${i}">
+                        <input type="checkbox" data-action="toggle" ${entry.enabled ? 'checked' : ''} />
+                        <span>${entry.name}</span>
+                        <button data-action="up" ${i === 0 ? 'disabled' : ''}>▲</button>
+                        <button data-action="down" ${i === order.length - 1 ? 'disabled' : ''}>▼</button>
+                    </div>
+                `).join('');
+            }
+
+            function saveOrder() {
+                streamDeckClient.send('sendToPlugin', { event: 'setShippingOrderConfig', order });
+            }
+
+            document.getElementById('orderList').addEventListener('click', (e) => {
+                const button = e.target.closest('button');
+                if (!button) return;
+                const row = button.closest('.order-row');
+                const index = parseInt(row.dataset.index, 10);
+                const action = button.dataset.action;
+                if (action === 'up' && index > 0) {
+                    [order[index - 1], order[index]] = [order[index], order[index - 1]];
+                } else if (action === 'down' && index < order.length - 1) {
+                    [order[index + 1], order[index]] = [order[index], order[index + 1]];
+                }
+                renderOrderList();
+                saveOrder();
+            });
+
+            document.getElementById('orderList').addEventListener('change', (e) => {
+                if (e.target.dataset.action !== 'toggle') return;
+                const row = e.target.closest('.order-row');
+                const index = parseInt(row.dataset.index, 10);
+                order[index].enabled = e.target.checked;
+                renderOrderList();
+                saveOrder();
+            });
+
+            document.addEventListener('DOMContentLoaded', () => {
+                if (!window.SDPIComponents) return;
+                streamDeckClient = SDPIComponents.streamDeckClient;
+
+                streamDeckClient.sendToPropertyInspector.subscribe((ev) => {
+                    const payload = ev?.payload ?? ev;
+                    if (payload?.event === 'getShippingProfiles') {
+                        if (payload.error) {
+                            showError(payload.error);
+                        } else {
+                            applyProfiles(payload.profiles);
+                        }
+                        return;
+                    }
+                    if (payload?.event === 'getShippingOrderConfig') {
+                        if (payload.order) {
+                            order = payload.order;
+                            renderOrderList();
+                        }
+                        return;
+                    }
+                });
+
+                streamDeckClient.send('sendToPlugin', { event: 'getShippingProfiles' });
+                streamDeckClient.send('sendToPlugin', { event: 'getShippingOrderConfig' });
+            });
+        })();
+    </script>
+</body>
+
+</html>

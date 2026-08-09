@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+
+<head lang="en">
+    <title>Adjust Start Price Settings</title>
+    <meta charset="utf-8" />
+    <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+</head>
+
+<body>
+    <sdpi-item label="Delta">
+        <sdpi-textfield setting="delta" placeholder="e.g. 1 or -1" default="1"></sdpi-textfield>
+    </sdpi-item>
+    <sdpi-item label="Hold Delta">
+        <sdpi-textfield setting="holdDelta" placeholder="e.g. 5 (default: 5x Delta)"></sdpi-textfield>
+    </sdpi-item>
+    <sdpi-item label="Currency Symbol">
+        <sdpi-textfield setting="currencySymbol" placeholder="€" default="€"></sdpi-textfield>
+    </sdpi-item>
+    <sdpi-item label=" ">
+        <span>
+            Kurz drücken addiert/subtrahiert "Delta" einmal. Gedrückt halten (&gt; 0,5s) wechselt
+            auf "Hold Delta" und wiederholt das alle 0,5s, solange die Taste gehalten wird.
+        </span>
+    </sdpi-item>
+</body>
+
+</html>

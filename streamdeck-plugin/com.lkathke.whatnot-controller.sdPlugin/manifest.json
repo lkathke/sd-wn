@@ -1,0 +1,351 @@
+{
+	"Name": "Whatnot Controller",
+	"Version": "0.1.0.0",
+	"Author": "lkathke",
+	"Actions": [
+		{
+			"Name": "Set Start Price",
+			"UUID": "com.lkathke.whatnot-controller.set-start-price",
+			"Icon": "imgs/actions/set-start-price/icon",
+			"Tooltip": "Sends a preset start price to the active Whatnot auction.",
+			"PropertyInspectorPath": "ui/set-start-price.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/set-start-price/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Set Shipping Method",
+			"UUID": "com.lkathke.whatnot-controller.set-shipping-method",
+			"Icon": "imgs/actions/set-shipping-method/icon",
+			"Tooltip": "Sends a preset shipping method to the active Whatnot auction.",
+			"PropertyInspectorPath": "ui/set-shipping-method.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/set-shipping-method/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Current Price Display",
+			"UUID": "com.lkathke.whatnot-controller.current-price-display",
+			"Icon": "imgs/actions/current-price-display/icon",
+			"Tooltip": "Read-only tile showing the current shared start price; flashes when it changes.",
+			"PropertyInspectorPath": "ui/current-price-display.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/current-price-display/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Current Shipping Display",
+			"UUID": "com.lkathke.whatnot-controller.current-shipping-display",
+			"Icon": "imgs/actions/current-shipping-display/icon",
+			"Tooltip": "Read-only tile showing the current shared shipping method; flashes when it changes.",
+			"PropertyInspectorPath": "ui/current-shipping-display.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/current-shipping-display/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Adjust Start Price",
+			"UUID": "com.lkathke.whatnot-controller.adjust-start-price",
+			"Icon": "imgs/actions/adjust-start-price/icon",
+			"Tooltip": "Nudges the shared start price up or down by a configurable amount.",
+			"PropertyInspectorPath": "ui/adjust-start-price.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/adjust-start-price/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Set Auction Duration",
+			"UUID": "com.lkathke.whatnot-controller.set-auction-duration",
+			"Icon": "imgs/actions/set-auction-duration/icon",
+			"Tooltip": "Sends a preset auction duration to the active Whatnot auction.",
+			"PropertyInspectorPath": "ui/set-auction-duration.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/set-auction-duration/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Shipping Picker Slot",
+			"UUID": "com.lkathke.whatnot-controller.shipping-picker-slot",
+			"Icon": "imgs/actions/shipping-picker-slot/icon",
+			"Tooltip": "One tile of the paginated shipping-profile picker; place several with different slot indices.",
+			"PropertyInspectorPath": "ui/shipping-picker-slot.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/shipping-picker-slot/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Shipping Picker Nav",
+			"UUID": "com.lkathke.whatnot-controller.shipping-picker-nav",
+			"Icon": "imgs/actions/shipping-picker-nav/icon",
+			"Tooltip": "Pages the shipping-profile picker forward or backward.",
+			"PropertyInspectorPath": "ui/shipping-picker-nav.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/shipping-picker-nav/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Article Picker Slot",
+			"UUID": "com.lkathke.whatnot-controller.article-picker-slot",
+			"Icon": "imgs/actions/article-picker-slot/icon",
+			"Tooltip": "One tile of the paginated listing picker; place several with different slot indices.",
+			"PropertyInspectorPath": "ui/article-picker-slot.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/article-picker-slot/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Article Picker Nav",
+			"UUID": "com.lkathke.whatnot-controller.article-picker-nav",
+			"Icon": "imgs/actions/article-picker-nav/icon",
+			"Tooltip": "Pages the listing picker forward or backward.",
+			"PropertyInspectorPath": "ui/article-picker-nav.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/article-picker-nav/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Adjust Shipping Method",
+			"UUID": "com.lkathke.whatnot-controller.adjust-shipping-method",
+			"Icon": "imgs/actions/adjust-shipping-method/icon",
+			"Tooltip": "Steps the current shipping method forward or backward through all shipping profiles.",
+			"PropertyInspectorPath": "ui/adjust-shipping-method.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/adjust-shipping-method/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Cycle Auction Duration",
+			"UUID": "com.lkathke.whatnot-controller.cycle-auction-duration",
+			"Icon": "imgs/actions/cycle-auction-duration/icon",
+			"Tooltip": "Cycles through a configurable list of auction durations on each press.",
+			"PropertyInspectorPath": "ui/cycle-auction-duration.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/cycle-auction-duration/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Start Auction",
+			"UUID": "com.lkathke.whatnot-controller.start-auction",
+			"Icon": "imgs/actions/start-auction/icon",
+			"Tooltip": "Starts the auction with whatever is currently set in the browser overlay.",
+			"PropertyInspectorPath": "ui/start-auction.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/start-auction/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Toggle Sudden Death",
+			"UUID": "com.lkathke.whatnot-controller.toggle-sudden-death",
+			"Icon": "imgs/actions/toggle-sudden-death/icon",
+			"Tooltip": "Flips the shared auction mode between Standard and Sudden Death before the next auction start.",
+			"PropertyInspectorPath": "ui/toggle-sudden-death.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/toggle-sudden-death/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Start Giveaway",
+			"UUID": "com.lkathke.whatnot-controller.start-giveaway",
+			"Icon": "imgs/actions/start-giveaway/icon",
+			"Tooltip": "Starts the giveaway for whatever listing is currently selected in the browser overlay.",
+			"PropertyInspectorPath": "ui/start-giveaway.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/start-giveaway/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Draw Giveaway Winner",
+			"UUID": "com.lkathke.whatnot-controller.draw-giveaway-winner",
+			"Icon": "imgs/actions/draw-giveaway-winner/icon",
+			"Tooltip": "Draws a winner for the currently running giveaway (or ends it early with no entries).",
+			"PropertyInspectorPath": "ui/draw-giveaway-winner.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/draw-giveaway-winner/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Pin Listing",
+			"UUID": "com.lkathke.whatnot-controller.pin-listing",
+			"Icon": "imgs/actions/pin-listing/icon",
+			"Tooltip": "Pins whatever listing is currently selected in the browser overlay as the live featured preview.",
+			"PropertyInspectorPath": "ui/pin-listing.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/pin-listing/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Unpin Listing",
+			"UUID": "com.lkathke.whatnot-controller.unpin-listing",
+			"Icon": "imgs/actions/unpin-listing/icon",
+			"Tooltip": "Unpins whatever listing is currently selected in the browser overlay.",
+			"PropertyInspectorPath": "ui/unpin-listing.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/unpin-listing/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Current Auction Article Display",
+			"UUID": "com.lkathke.whatnot-controller.current-auction-article-display",
+			"Icon": "imgs/actions/current-auction-article-display/icon",
+			"Tooltip": "Shows the listing every auction-related key (price, shipping, duration, pin, start) currently acts on. Press to cycle to the next auction-type listing.",
+			"PropertyInspectorPath": "ui/current-auction-article-display.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/current-auction-article-display/key",
+					"TitleAlignment": "bottom"
+				}
+			]
+		},
+		{
+			"Name": "Current Giveaway Article Display",
+			"UUID": "com.lkathke.whatnot-controller.current-giveaway-article-display",
+			"Icon": "imgs/actions/current-giveaway-article-display/icon",
+			"Tooltip": "Shows the listing Start Giveaway/Draw Giveaway Winner currently act on. Press to cycle to the next giveaway-type listing.",
+			"PropertyInspectorPath": "ui/current-giveaway-article-display.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/current-giveaway-article-display/key",
+					"TitleAlignment": "bottom"
+				}
+			]
+		}
+	],
+	"Category": "Whatnot Controller",
+	"CategoryIcon": "imgs/plugin/category-icon",
+	"CodePath": "bin/plugin.js",
+	"Description": "Set start prices and shipping methods on Whatnot live auctions from your Stream Deck.",
+	"Icon": "imgs/plugin/marketplace",
+	"SDKVersion": 3,
+	"Software": {
+		"MinimumVersion": "7.1"
+	},
+	"OS": [
+		{
+			"Platform": "mac",
+			"MinimumVersion": "12"
+		},
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
+	],
+	"Nodejs": {
+		"Version": "24",
+		"Debug": "enabled"
+	},
+	"UUID": "com.lkathke.whatnot-controller"
+}

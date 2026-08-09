@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+
+<head lang="en">
+    <title>Start Auction Settings</title>
+    <meta charset="utf-8" />
+    <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+</head>
+
+<body>
+    <sdpi-item label="Bump-Zeit (Sekunden)">
+        <sdpi-textfield setting="bumpSeconds" placeholder="5" type="number" min="0"></sdpi-textfield>
+    </sdpi-item>
+    <sdpi-item label=" ">
+        <span>
+            Startet die Auktion mit dem, was gerade im Whatnot-Overlay im Browser eingestellt ist
+            (Listing, Preis, Versand, Dauer). Die Bump-Zeit oben wird dabei im Overlay gesetzt
+            (nächstliegender Wert, falls keine exakte Option existiert) — leer lassen für 5s
+            Standard. Kein eigenes Bestätigen wie im Browser-Button — ein Druck reicht.
+        </span>
+    </sdpi-item>
+</body>
+
+</html>
