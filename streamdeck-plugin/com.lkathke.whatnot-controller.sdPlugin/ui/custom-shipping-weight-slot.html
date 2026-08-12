@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+
+<head lang="en">
+    <title>Custom Shipping Weight Slot Settings</title>
+    <meta charset="utf-8" />
+    <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+</head>
+
+<body>
+    <sdpi-item label="Slot Index">
+        <sdpi-textfield setting="slot" placeholder="0-based, e.g. 0, 1, 2 ..." default="0"></sdpi-textfield>
+    </sdpi-item>
+    <sdpi-item label="Anwenden auf">
+        <sdpi-select setting="target" default="auction">
+            <option value="auction">Auktionsartikel</option>
+            <option value="giveaway">Giveaway-Artikel</option>
+        </sdpi-select>
+    </sdpi-item>
+    <sdpi-item label=" ">
+        <span>
+            Platziere ca. 14 dieser Tasten direkt in einem Stream Deck-Ordner, mit fortlaufenden
+            Slot-Indizes (0, 1, 2, ...) — keine Nav-Tasten nötig. Zeigt automatisch alle deine
+            eigenen ("custom") Versandprofile, aufsteigend nach Gewicht sortiert, nicht die
+            vorgeschlagenen/fertigen Profile von Whatnot. Ein Druck wirkt wie "Set Shipping
+            Method", angewendet auf den oben gewählten Artikeltyp.
+        </span>
+    </sdpi-item>
+</body>
+
+</html>

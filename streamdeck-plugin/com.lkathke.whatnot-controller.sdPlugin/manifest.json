@@ -292,6 +292,22 @@
 			]
 		},
 		{
+			"Name": "Custom Shipping Weight Slot",
+			"UUID": "com.lkathke.whatnot-controller.custom-shipping-weight-slot",
+			"Icon": "imgs/actions/custom-shipping-weight-slot/icon",
+			"Tooltip": "One tile of a grid showing the seller's own custom shipping profiles, sorted lightest-first. Place ~14 of these in a Folder. Same effect as Set Shipping Method when pressed.",
+			"PropertyInspectorPath": "ui/custom-shipping-weight-slot.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/custom-shipping-weight-slot/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
 			"Name": "Current Auction Article Display",
 			"UUID": "com.lkathke.whatnot-controller.current-auction-article-display",
 			"Icon": "imgs/actions/current-auction-article-display/icon",

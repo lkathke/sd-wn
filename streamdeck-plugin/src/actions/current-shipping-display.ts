@@ -11,11 +11,10 @@ import streamDeck, {
 
 import { isExtensionConnected, onConnectionStatusChange } from "../bridge/connection-status";
 import { renderDisplayTextWrapped } from "../bridge/display-tile";
-import { broadcastCommand, requestFromExtension } from "../bridge/ws-server";
+import { broadcastCommand } from "../bridge/ws-server";
+import { ensureCustomShippingProfilesLoaded } from "../state/custom-shipping-grid";
 import { getCurrentShippingLabel, onShippingChange, setCurrentShippingLabel } from "../state/current-shipping";
 import { getShippingOrder, mergeWithLiveProfiles, setShippingOrder, ShippingOrderEntry } from "../state/shipping-order";
-
-type ShippingProfile = { id: string; name: string };
 
 type DisplayAction = KeyAction<CurrentShippingDisplaySettings>;
 
@@ -75,9 +74,6 @@ export class CurrentShippingDisplay extends SingletonAction<CurrentShippingDispl
 		ev: SendToPluginEvent<{ event?: string; order?: ShippingOrderEntry[] }, CurrentShippingDisplaySettings>
 	): Promise<void> {
 		switch (ev.payload?.event) {
-			case "getShippingProfiles":
-				await this.sendProfiles();
-				return;
 			case "getShippingOrderConfig":
 				await this.sendOrderConfig();
 				return;
@@ -89,22 +85,9 @@ export class CurrentShippingDisplay extends SingletonAction<CurrentShippingDispl
 		}
 	}
 
-	private async sendProfiles(): Promise<void> {
-		try {
-			const profiles = await requestFromExtension<ShippingProfile[]>("getShippingProfiles");
-			await streamDeck.ui.sendToPropertyInspector({ event: "getShippingProfiles", profiles });
-		} catch (err) {
-			streamDeck.logger.warn(`Could not fetch shipping profiles from extension: ${String(err)}`);
-			await streamDeck.ui.sendToPropertyInspector({ event: "getShippingProfiles", error: String(err) });
-		}
-	}
-
 	private async sendOrderConfig(): Promise<void> {
 		try {
-			const [profiles, saved] = await Promise.all([
-				requestFromExtension<ShippingProfile[]>("getShippingProfiles"),
-				getShippingOrder()
-			]);
+			const [profiles, saved] = await Promise.all([ensureCustomShippingProfilesLoaded(true), getShippingOrder()]);
 			const merged = mergeWithLiveProfiles(
 				saved,
 				profiles.map((p) => p.name)
@@ -117,7 +100,11 @@ export class CurrentShippingDisplay extends SingletonAction<CurrentShippingDispl
 	}
 
 	override async onKeyDown(ev: KeyDownEvent<CurrentShippingDisplaySettings>): Promise<void> {
-		const label = ev.payload.settings.defaultShippingLabel?.trim();
+		// Always resets to the lightest custom profile (list is already weight-sorted ascending —
+		// see state/custom-shipping-grid.ts) rather than a configurable default — no PI setting to
+		// keep in sync/go stale.
+		const profiles = await ensureCustomShippingProfilesLoaded();
+		const label = profiles[0]?.name;
 		if (!label) {
 			await ev.action.showAlert();
 			return;
@@ -134,12 +121,10 @@ export class CurrentShippingDisplay extends SingletonAction<CurrentShippingDispl
 }
 
 /**
- * Settings for {@link CurrentShippingDisplay}. `defaultShippingLabel` is what pressing the tile
- * resets the shared current shipping method to. `target` picks which listing type's shipping
+ * Settings for {@link CurrentShippingDisplay}. `target` picks which listing type's shipping
  * tracker (see state/current-shipping.ts) this key shows/resets — "auction" if unset, for
  * backward-compatible key instances that predate the checkbox.
  */
 type CurrentShippingDisplaySettings = {
-	defaultShippingLabel?: string;
 	target?: "auction" | "giveaway";
 };

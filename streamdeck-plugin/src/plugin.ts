@@ -5,6 +5,7 @@ import { AdjustStartPrice } from "./actions/adjust-start-price";
 import { ArticlePickerNav } from "./actions/article-picker-nav";
 import { ArticlePickerSlot } from "./actions/article-picker-slot";
 import { CurrentAuctionArticleDisplay } from "./actions/current-auction-article-display";
+import { CustomShippingWeightSlot } from "./actions/custom-shipping-weight-slot";
 import { CurrentGiveawayArticleDisplay } from "./actions/current-giveaway-article-display";
 import { CurrentPriceDisplay } from "./actions/current-price-display";
 import { CurrentShippingDisplay } from "./actions/current-shipping-display";
@@ -58,6 +59,7 @@ streamDeck.actions.registerAction(new DrawGiveawayWinnerButton());
 streamDeck.actions.registerAction(new PinListingButton());
 streamDeck.actions.registerAction(new UnpinListingButton());
 streamDeck.actions.registerAction(new CurrentAuctionArticleDisplay());
+streamDeck.actions.registerAction(new CustomShippingWeightSlot());
 streamDeck.actions.registerAction(new CurrentGiveawayArticleDisplay());
 
 // Finally, connect to the Stream Deck.

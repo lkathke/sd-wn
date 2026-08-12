@@ -711,7 +711,44 @@ document.addEventListener('click', (e) => {
   render();
   applyNativeSync(true);
   setInterval(refresh, 1500);
+  seedGiveawayTabOnce();
 })();
+
+// Whatnot only ever registers its GetSellerLiveShop query for a given tab (Angebote/Auktion/
+// Giveaways/Sofortkauf) once the seller has actually clicked that tab at least once — bridge.js's
+// ensureAllListingsLoaded() works around this for the AUCTION/GIVEAWAY/BUY_IT_NOW GraphQL calls
+// themselves, but a real click still seems to make the underlying data land more reliably (e.g. the
+// commerce/auction Phoenix channel joins), so this does one real, synthetic click on "Giveaways"
+// then back to "Auction" shortly after page load, purely as a best-effort nudge. NEVER a
+// requirement — bridge.js's own GraphQL-based loading is the actual fallback if this does nothing
+// or the buttons aren't found.
+//
+// This clicks a REAL native Whatnot tab button, which is exactly what previously crashed the page
+// outright with an uncaught React error #418 (hydration mismatch tearing down the whole React
+// tree) — see switchNativeTab()'s comment above, which is why THAT function is a no-op. Delaying a
+// few seconds past page load (letting React finish its own initial hydration first) and wrapping
+// every step in try/catch is meant to avoid repeating that, but this has NOT been verified safe
+// against a fresh, truly-empty show live — watch for the same crash if it ever recurs.
+function seedGiveawayTabOnce() {
+  setTimeout(() => {
+    try {
+      const giveawaysBtn = document.querySelector('[data-wn-action="seller_live.shop.tab.giveaways"]');
+      if (!giveawaysBtn) { console.warn('[Whatnot Helper] Giveaways-Tab nicht gefunden'); return; }
+      giveawaysBtn.click();
+      setTimeout(() => {
+        try {
+          const auctionBtn = document.querySelector('[data-wn-action="seller_live.shop.tab.auction"]');
+          if (!auctionBtn) { console.warn('[Whatnot Helper] Auktion-Tab nicht gefunden'); return; }
+          auctionBtn.click();
+        } catch (e) {
+          console.warn('[Whatnot Helper] Zurückwechseln zum Auktion-Tab fehlgeschlagen:', e);
+        }
+      }, 800);
+    } catch (e) {
+      console.warn('[Whatnot Helper] Wechsel zum Giveaways-Tab fehlgeschlagen:', e);
+    }
+  }, 3000);
+}
 
 // --- Stream Deck Bridge -----------------------------------------------
 // Verbindet sich mit dem lokalen WebSocket-Server, den das Stream-Deck-Plugin

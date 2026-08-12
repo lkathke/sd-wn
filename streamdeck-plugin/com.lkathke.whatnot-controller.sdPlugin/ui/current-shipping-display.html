@@ -39,22 +39,12 @@
             <option value="giveaway">Giveaway-Artikel</option>
         </sdpi-select>
     </sdpi-item>
-    <sdpi-item label="Default Shipping Method">
-        <sdpi-select id="defaultShippingSelect" setting="defaultShippingLabel" default="Standard Shipping">
-            <option value="Standard Shipping">Standard Shipping</option>
-            <option value="Free Shipping">Free Shipping</option>
-            <option value="Calculated Shipping">Calculated Shipping</option>
-            <option value="Local Pickup">Local Pickup</option>
-        </sdpi-select>
-    </sdpi-item>
-    <sdpi-item id="liveStatus" label=" ">
-        <span>Lade echte Versandprofile …</span>
-    </sdpi-item>
     <sdpi-item label=" ">
         <span>
             Zeigt die aktuell gewählte Versandart (des oben gewählten Artikeltyps) live an und
             blinkt kurz rot auf, wenn sie sich ändert. Ein Druck auf diese Taste selbst setzt die
-            Versandart auf den oben eingestellten Standardwert zurück.
+            Versandart immer auf das leichteste eigene ("custom") Profil zurück — kein
+            konfigurierbarer Standardwert mehr.
         </span>
     </sdpi-item>
 
@@ -71,25 +61,6 @@
 
     <script>
         (function () {
-            function applyProfiles(profiles) {
-                if (!Array.isArray(profiles) || profiles.length === 0) return;
-                const select = document.getElementById('defaultShippingSelect');
-                const current = select.value;
-                select.innerHTML = profiles
-                    .map((p) => `<option value="${p.name}">${p.name}</option>`)
-                    .join('');
-                if (profiles.some((p) => p.name === current)) {
-                    select.value = current;
-                }
-                document.getElementById('liveStatus').querySelector('span').textContent =
-                    `${profiles.length} echte Versandprofile geladen ✓`;
-            }
-
-            function showError(message) {
-                document.getElementById('liveStatus').querySelector('span').textContent =
-                    `Konnte echte Profile nicht laden (${message}) – Fallback-Liste aktiv`;
-            }
-
             let order = [];
             let streamDeckClient;
 
@@ -139,14 +110,6 @@
 
                 streamDeckClient.sendToPropertyInspector.subscribe((ev) => {
                     const payload = ev?.payload ?? ev;
-                    if (payload?.event === 'getShippingProfiles') {
-                        if (payload.error) {
-                            showError(payload.error);
-                        } else {
-                            applyProfiles(payload.profiles);
-                        }
-                        return;
-                    }
                     if (payload?.event === 'getShippingOrderConfig') {
                         if (payload.order) {
                             order = payload.order;
@@ -156,7 +119,6 @@
                     }
                 });
 
-                streamDeckClient.send('sendToPlugin', { event: 'getShippingProfiles' });
                 streamDeckClient.send('sendToPlugin', { event: 'getShippingOrderConfig' });
             });
         })();
