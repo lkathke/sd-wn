@@ -60,8 +60,8 @@ root.innerHTML = `
     <label class="field"><span>Dauer</span>
       <select id="duration" title="Auktionsdauer">
         <option value="2">2 s</option><option value="3">3 s</option><option value="5">5 s</option>
-        <option value="7">7 s</option><option value="10">10 s</option><option value="15">15 s</option>
-        <option value="20">20 s</option><option value="30" selected>30 s</option><option value="45">45 s</option>
+        <option value="7">7 s</option><option value="10">10 s</option><option value="15" selected>15 s</option>
+        <option value="20">20 s</option><option value="30">30 s</option><option value="45">45 s</option>
         <option value="60">1 min</option><option value="90">1 min 30 s</option><option value="120">2 min</option>
         <option value="150">2 min 30 s</option><option value="180">3 min</option><option value="210">3 min 30 s</option>
         <option value="240">4 min</option><option value="270">4 min 30 s</option><option value="300">5 min</option>
@@ -729,25 +729,32 @@ document.addEventListener('click', (e) => {
 // few seconds past page load (letting React finish its own initial hydration first) and wrapping
 // every step in try/catch is meant to avoid repeating that, but this has NOT been verified safe
 // against a fresh, truly-empty show live — watch for the same crash if it ever recurs.
+function switchToGiveawaysThenAuctionOnce() {
+  try {
+    const giveawaysBtn = document.querySelector('[data-wn-action="seller_live.shop.tab.giveaways"]');
+    if (!giveawaysBtn) { console.warn('[Whatnot Helper] Giveaways-Tab nicht gefunden'); return; }
+    giveawaysBtn.click();
+    setTimeout(() => {
+      try {
+        const auctionBtn = document.querySelector('[data-wn-action="seller_live.shop.tab.auction"]');
+        if (!auctionBtn) { console.warn('[Whatnot Helper] Auktion-Tab nicht gefunden'); return; }
+        auctionBtn.click();
+      } catch (e) {
+        console.warn('[Whatnot Helper] Zurückwechseln zum Auktion-Tab fehlgeschlagen:', e);
+      }
+    }, 800);
+  } catch (e) {
+    console.warn('[Whatnot Helper] Wechsel zum Giveaways-Tab fehlgeschlagen:', e);
+  }
+}
+
+// Confirmed live: a single attempt right after load doesn't always "take" (unclear why — possibly
+// the tab component isn't fully interactive yet even a few seconds in). Retrying once more ~10s
+// after the first attempt catches the cases the first one misses, without needing to figure out
+// exactly why the first one sometimes fails.
 function seedGiveawayTabOnce() {
-  setTimeout(() => {
-    try {
-      const giveawaysBtn = document.querySelector('[data-wn-action="seller_live.shop.tab.giveaways"]');
-      if (!giveawaysBtn) { console.warn('[Whatnot Helper] Giveaways-Tab nicht gefunden'); return; }
-      giveawaysBtn.click();
-      setTimeout(() => {
-        try {
-          const auctionBtn = document.querySelector('[data-wn-action="seller_live.shop.tab.auction"]');
-          if (!auctionBtn) { console.warn('[Whatnot Helper] Auktion-Tab nicht gefunden'); return; }
-          auctionBtn.click();
-        } catch (e) {
-          console.warn('[Whatnot Helper] Zurückwechseln zum Auktion-Tab fehlgeschlagen:', e);
-        }
-      }, 800);
-    } catch (e) {
-      console.warn('[Whatnot Helper] Wechsel zum Giveaways-Tab fehlgeschlagen:', e);
-    }
-  }, 3000);
+  setTimeout(switchToGiveawaysThenAuctionOnce, 3000);
+  setTimeout(switchToGiveawaysThenAuctionOnce, 13000);
 }
 
 // --- Stream Deck Bridge -----------------------------------------------
