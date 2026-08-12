@@ -11,8 +11,8 @@ import {
 import { isExtensionConnected, onConnectionStatusChange } from "../bridge/connection-status";
 import { renderStaticKey } from "../bridge/display-tile";
 import { broadcastCommand } from "../bridge/ws-server";
+import { ensureCustomShippingProfilesLoaded } from "../state/custom-shipping-grid";
 import { getCurrentShippingLabel, setCurrentShippingLabel } from "../state/current-shipping";
-import { ensureShippingProfilesLoaded } from "../state/shipping-picker";
 import { getEnabledShippingOrder } from "../state/shipping-order";
 
 const BG_COLOR = "#2d6cdf";
@@ -62,7 +62,12 @@ export class AdjustShippingMethod extends SingletonAction<AdjustShippingSettings
 	}
 
 	override async onKeyDown(ev: KeyDownEvent<AdjustShippingSettings>): Promise<void> {
-		const liveProfiles = await ensureShippingProfilesLoaded();
+		// Custom-only, weight-sorted (see state/custom-shipping-grid.ts) — not the full profile
+		// list. Passing every live name here (as before) meant any suggested/non-custom profile
+		// not yet in the saved order got auto-appended by mergeWithLiveProfiles() and re-included in
+		// the ◀/▶ stepping, defeating the "custom only" filter configured via Current Shipping
+		// Display's property inspector.
+		const liveProfiles = await ensureCustomShippingProfilesLoaded();
 		const order = await getEnabledShippingOrder(liveProfiles.map((p) => p.name));
 		if (order.length === 0) {
 			await ev.action.showAlert();
