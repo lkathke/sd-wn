@@ -541,6 +541,17 @@ window.addEventListener('message', (e) => {
   }
 });
 
+// Relays bridge.js's raw "/services/live/socket" traffic capture (see its WebSocket.prototype.send
+// patch and attach()) to the Stream Deck plugin, which writes it to a timestamped log file — the
+// browser side has no filesystem access, so the plugin (a Node process) is the one that can
+// actually write the log.
+window.addEventListener('message', (e) => {
+  if (e.source !== window || e.data?.__wn !== 'wsCapture') return;
+  if (!sdSocket || sdSocket.readyState !== WebSocket.OPEN) return;
+  const { direction, t, data } = e.data;
+  sdSocket.send(JSON.stringify({ type: 'wsCapture', direction, t, data }));
+});
+
 const LIVESTREAM_ID = location.pathname.split('/').pop();
 
 // Persists price/shipping to the actual listing record (not just what the overlay locally shows),

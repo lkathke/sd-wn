@@ -280,7 +280,18 @@ mutation UpdateListing($input: ListingInput!) {
   // unrelated WebSocket on the page (e.g. Agora's video sockets).
   const AUCTION_SOCKET_URL_RE = /\/services\/(?:auction|live)\/socket/;
 
+  // Raw traffic capture for the "/services/live/socket" connection specifically (the one carrying
+  // the "auction:<id>" topic — see the comment on AUCTION_SOCKET_URL_RE) — forwarded to overlay.js,
+  // which relays it to the Stream Deck plugin to write to a timestamped log file. Always on; this
+  // is a diagnostic tool, not something expected to run unattended for hours, so no on/off toggle.
+  const LIVE_SOCKET_URL_RE = /\/services\/live\/socket/;
+
   WebSocket.prototype.send = function (data) {
+    try {
+      if (typeof data === 'string' && LIVE_SOCKET_URL_RE.test(this.url)) {
+        window.postMessage({ __wn: 'wsCapture', direction: 'send', t: Date.now(), data }, location.origin);
+      }
+    } catch {}
     try {
       if (typeof data === 'string' && AUCTION_SOCKET_URL_RE.test(this.url)) {
         const f = JSON.parse(data);
@@ -307,6 +318,11 @@ mutation UpdateListing($input: ListingInput!) {
     if (hooked.has(ws)) return;
     hooked.add(ws);
     ws.addEventListener('message', (ev) => {
+      try {
+        if (typeof ev.data === 'string' && LIVE_SOCKET_URL_RE.test(ws.url)) {
+          window.postMessage({ __wn: 'wsCapture', direction: 'recv', t: Date.now(), data: ev.data }, location.origin);
+        }
+      } catch {}
       try {
         const f = JSON.parse(ev.data);
         if (!Array.isArray(f) || f.length !== 5) return;

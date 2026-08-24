@@ -1,4 +1,7 @@
 import streamDeck from "@elgato/streamdeck";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { setExtensionConnected } from "./connection-status";
@@ -21,6 +24,20 @@ export type WhatnotCommand =
 	| { type: "pinListing" }
 	| { type: "unpinListing" }
 	| { type: "cycleArticle"; kind: "auction" | "giveaway" };
+
+/**
+ * One-way, extension → plugin: a single raw frame captured on Whatnot's "/services/live/socket"
+ * connection (see bridge.js's WebSocket.prototype.send patch and attach()) — the browser side has
+ * no filesystem access, so every captured frame is relayed here to actually get written to a log
+ * file. `t` is the browser-side Date.now() at capture time (kept, not re-timestamped here, so the
+ * log reflects when the frame was actually seen rather than when it happened to reach the plugin).
+ */
+type WsCaptureMessage = {
+	type: "wsCapture";
+	direction: "send" | "recv";
+	t: number;
+	data: string;
+};
 
 /**
  * One-way, extension → plugin: reports what the browser overlay bar is currently showing, so
@@ -135,6 +152,37 @@ function attemptBind(retryIndex: number): void {
 	});
 }
 
+// Lazily created on the first captured frame, one file per plugin-process lifetime rather than per
+// message — filename is the date/time of that first frame, colons/dots swapped for filesystem
+// safety (Windows rejects ":" in filenames). Written to the Desktop rather than inside the
+// plugin's own installed folder — that folder isn't somewhere a seller would think to look, and a
+// plugin update/reinstall could wipe it.
+let capturePath: string | null = null;
+
+function getCapturePath(): string {
+	if (capturePath) return capturePath;
+	const dir = join(homedir(), "Desktop", "whatnot-ws-captures");
+	mkdirSync(dir, { recursive: true });
+	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+	capturePath = join(dir, `ws-capture-${stamp}.jsonl`);
+	return capturePath;
+}
+
+/**
+ * Appends one captured "/services/live/socket" frame as a JSON line: `{ t, iso, direction, data }`
+ * where `data` is the raw frame text as sent/received (not re-parsed — kept exactly as seen so
+ * nothing about the original wire format is lost). Never throws outward — a diagnostic capture
+ * tool must not be able to crash the plugin process over a disk/permissions hiccup.
+ */
+function appendWsCapture(msg: WsCaptureMessage): void {
+	try {
+		const line = JSON.stringify({ t: msg.t, iso: new Date(msg.t).toISOString(), direction: msg.direction, data: msg.data });
+		appendFileSync(getCapturePath(), line + "\n");
+	} catch (err) {
+		streamDeck.logger.warn(`Could not write ws capture log: ${String(err)}`);
+	}
+}
+
 /**
  * Handles a raw message coming back from the extension: either a reply to a request we made via
  * {@link requestFromExtension}, or an unsolicited {@link OverlayStateMessage} reporting a change
@@ -152,6 +200,9 @@ function handleExtensionMessage(raw: string): void {
 		mode?: string;
 		auction?: ArticleInfo;
 		giveaway?: ArticleInfo;
+		direction?: "send" | "recv";
+		t?: number;
+		data?: string;
 	};
 	try {
 		msg = JSON.parse(raw);
@@ -166,6 +217,11 @@ function handleExtensionMessage(raw: string): void {
 
 	if (msg.type === "articleState") {
 		setCurrentArticles({ auction: msg.auction ?? null, giveaway: msg.giveaway ?? null });
+		return;
+	}
+
+	if (msg.type === "wsCapture") {
+		appendWsCapture(msg as WsCaptureMessage);
 		return;
 	}
 
