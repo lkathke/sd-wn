@@ -545,11 +545,52 @@ window.addEventListener('message', (e) => {
 // patch and attach()) to the Stream Deck plugin, which writes it to a timestamped log file — the
 // browser side has no filesystem access, so the plugin (a Node process) is the one that can
 // actually write the log.
+//
+// Buffered rather than sent straight through, because the capture's whole point is analysing the
+// chat afterwards: this used to `return` whenever the plugin socket wasn't OPEN, so every frame
+// during a plugin restart — or a whole show run with the Stream Deck plugin not running at all —
+// was dropped silently, and you'd only find out when the log turned out to be missing that
+// stretch. Each entry keeps the browser-side timestamp bridge.js captured it with, so frames that
+// sit in the buffer for minutes still land in the log with the time they actually happened.
+//
+// Bounded so a long outage can't grow the tab's memory without limit. Frames are small (measured
+// live: analytics frames ~2.6 KB, chat messages well under 1 KB), so 5000 entries is a few MB
+// worst case and covers hours of a quiet show. Oldest go first — a gap at the start of a recovered
+// stretch beats losing the most recent traffic.
+//
+// Note this only survives as long as the TAB does: closing the dashboard tab drops whatever is
+// still buffered. Surviving that would need chrome.storage and a different design.
+const CAPTURE_BUFFER_MAX = 5000;
+const captureBuffer = [];
+let captureDroppedFrames = 0;
+
+function flushCaptureBuffer() {
+  if (!sdSocket || sdSocket.readyState !== WebSocket.OPEN) return;
+  while (captureBuffer.length > 0) {
+    try {
+      sdSocket.send(JSON.stringify({ type: 'wsCapture', ...captureBuffer[0] }));
+    } catch {
+      return; // connection died mid-flush — keep the rest buffered for the next open
+    }
+    // Only drop the entry once its send actually went through: a failure then re-sends it rather
+    // than losing it, and a success never re-sends it and duplicates a line in the log.
+    captureBuffer.shift();
+  }
+  if (captureDroppedFrames > 0) {
+    console.warn(`[Whatnot Helper] ${captureDroppedFrames} Capture-Frames verworfen (Puffer voll).`);
+    captureDroppedFrames = 0;
+  }
+}
+
 window.addEventListener('message', (e) => {
   if (e.source !== window || e.data?.__wn !== 'wsCapture') return;
-  if (!sdSocket || sdSocket.readyState !== WebSocket.OPEN) return;
   const { direction, t, data } = e.data;
-  sdSocket.send(JSON.stringify({ type: 'wsCapture', direction, t, data }));
+  captureBuffer.push({ direction, t, data });
+  while (captureBuffer.length > CAPTURE_BUFFER_MAX) {
+    captureBuffer.shift();
+    captureDroppedFrames++;
+  }
+  flushCaptureBuffer();
 });
 
 const LIVESTREAM_ID = location.pathname.split('/').pop();
@@ -793,6 +834,7 @@ function seedGiveawayTabOnce() {
       lastSentArticleState = null;
       sendOverlayState();
       sendArticleState();
+      flushCaptureBuffer(); // drain anything captured while the plugin was away
     });
 
     socket.addEventListener('close', () => {
