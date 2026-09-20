@@ -20,6 +20,28 @@ const host = document.createElement('div');
 host.id = 'wn-helper-host';
 document.documentElement.appendChild(host);
 const root = host.attachShadow({ mode: 'open' });
+
+// The bar gets torn out of the DOM again on its own, intermittently — confirmed live: the host was
+// present 0.1s after load and gone 46s later, with `document.documentElement` down to just
+// [HEAD, BODY], while bridge.js kept running happily in the MAIN world. That's what makes the bar
+// "randomly" disappear mid-show, and it's easy to misread as the whole extension being broken
+// (it isn't — only the UI half is gone).
+//
+// Likely cause: Whatnot's Next.js app hydrates the whole document and throws repeated hydration
+// mismatches here (Minified React error #418 in the console); when React re-renders from the root,
+// an unexpected child of <html> — exactly what this host is — gets swept away with it. That's a
+// strong hypothesis, not a proven one, so don't rely on it: moving the host to <body> wouldn't
+// help anyway, since React manages that too.
+//
+// So instead of guessing at a container React won't touch, just put it back. Detaching an element
+// doesn't destroy its shadow root, its contents, or any listener bound to them, so re-appending
+// the very same node restores a fully working bar with its current state intact — no re-render and
+// no re-initialisation needed.
+function ensureHostAttached() {
+  if (!host.isConnected) document.documentElement.appendChild(host);
+}
+
+new MutationObserver(ensureHostAttached).observe(document.documentElement, { childList: true });
 root.innerHTML = `
   <style>
     :host { all: initial; }
@@ -119,6 +141,9 @@ function ensureListingDetails(l) {
 }
 
 async function refresh() {
+  // Belt and braces alongside the MutationObserver above: if documentElement itself ever gets
+  // replaced the observer goes with it, and this 1.5s poll is already running anyway.
+  ensureHostAttached();
   const st = await call('status');
   $('dot').className = 'dot' + (st.gqlReady && st.socketReady ? ' ok' : '');
   void ensureAllListingsLoaded();

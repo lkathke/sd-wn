@@ -48,6 +48,20 @@ Stream Deck app (Elgato)                Chrome (whatnot.com tab)
 lives in ISOLATED world instead because MAIN-world scripts shouldn't own long-lived DOM/WebSocket
 state that needs `chrome.*` APIs later.
 
+**The overlay bar gets torn out of the DOM by the page, intermittently.** Confirmed live: the
+`#wn-helper-host` element was present 0.1s after load and gone 46s later, with
+`document.documentElement` down to just `[HEAD, BODY]`, while `bridge.js` kept running normally in
+the MAIN world. This is what makes the bar "randomly" vanish mid-show, and it reads as the whole
+extension being broken when only the UI half is gone — worth ruling out first the next time
+something looks dead. Likely (not proven) Whatnot's Next.js app re-rendering from the root after
+one of its repeated hydration mismatches (`Minified React error #418` in the console), which sweeps
+away an unexpected child of `<html>`. Moving the host to `<body>` wouldn't help — React manages
+that too. `overlay.js` instead re-attaches it (`ensureHostAttached`, driven by a `MutationObserver`
+on `documentElement` plus a check on every `refresh()` tick in case `documentElement` itself gets
+replaced and takes the observer with it). It re-appends the **same node**: detaching doesn't
+destroy the shadow root or any listener, so the bar comes back with its full current state — verified
+by removing it 20 times in a row and finding the price, duration and selected listing all intact.
+
 ## WebSocket bridge protocol (port 9271)
 
 Defined in `streamdeck-plugin/src/bridge/ws-server.ts`. Four message shapes, all JSON:
