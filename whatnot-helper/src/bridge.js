@@ -27,6 +27,72 @@
     return origFetch.apply(this, arguments);
   };
 
+  // Whatnot's Apollo client is built with its OWN fetch implementation (HttpLink's
+  // `options.fetch`, taken from a pristine realm), NOT `window.fetch` — so the patch above no
+  // longer sees a single GraphQL request. Confirmed live 2026-09-20 on a real show: the patch was
+  // demonstrably installed (`window.fetch` non-native), yet 11 GraphQL requests went out in 10s
+  // and exactly 0 reached it. Re-assigning `options.fetch` afterwards doesn't help either —
+  // HttpLink reads that option into a closure at construction time. The window.fetch patch is kept
+  // anyway: it costs nothing and still covers any code path that does use the global.
+  //
+  // All we actually need from the app is its auth headers. The endpoint itself happily accepts
+  // self-authored operation documents — confirmed live by POSTing a hand-written
+  // `query WhoAmI { me { id username } }` to /services/graphql/ and getting 200 back with the real
+  // logged-in user. (This disproves the old "operation allowlist / persisted queries" theory: that
+  // historical 400 was only ever the operationName-in-URL vs. operationName-in-body mismatch.)
+  // Cookies alone are NOT enough — the same request without these headers returns 200 with
+  // `me: null`. The headers live on every Apollo operation's context, put there by a middleware
+  // link upstream of the terminating HttpLink, so that's where we read them.
+  const GQL_URL = '/services/graphql/';
+
+  function terminatingLink(client) {
+    let l = client?.link, guard = 0;
+    while (l && guard++ < 16) {
+      if (!l.right && !l.link) return l;
+      l = l.right || l.link;
+    }
+    return null;
+  }
+
+  /** Wraps the terminating link's request() to snapshot each operation's auth headers. */
+  function hookApolloAuth(client) {
+    const term = terminatingLink(client);
+    if (!term || typeof term.request !== 'function' || term.__wnHooked) return;
+    const orig = term.request.bind(term);
+    term.request = function (operation, forward) {
+      try {
+        const headers = operation.getContext?.()?.headers;
+        // Only accept a context that actually carries auth — some operations (and Apollo's own
+        // internal ones) go out without it, and storing those would pin state.gql to a
+        // permanently unauthenticated header set.
+        if (headers?.authorization) state.gql = { url: GQL_URL, headers: { ...headers } };
+      } catch {}
+      return orig(operation, forward);
+    };
+    term.__wnHooked = true;
+  }
+
+  // The Apollo client doesn't exist yet at document_start and we must not miss its assignment —
+  // install an accessor now so we hook the instant the app sets it, plus a bounded poll for builds
+  // that assign it before this script runs or rebuild their link chain later.
+  (() => {
+    let client;
+    try {
+      client = window.__APOLLO_CLIENT__;
+      Object.defineProperty(window, '__APOLLO_CLIENT__', {
+        configurable: true,
+        get: () => client,
+        set: (v) => { client = v; try { hookApolloAuth(v); } catch {} },
+      });
+    } catch {}
+    try { if (client) hookApolloAuth(client); } catch {}
+    let tries = 0;
+    const timer = setInterval(() => {
+      if (state.gql || ++tries > 120) { clearInterval(timer); return; }
+      try { hookApolloAuth(window.__APOLLO_CLIENT__); } catch {}
+    }, 1000);
+  })();
+
   function harvest(input, init) {
     const url = typeof input === 'string' ? input : input?.url;
     if (!url || !/graphql/i.test(url)) return;
@@ -46,11 +112,17 @@
   }
 
   async function gql(operationName, variables, fallbackQuery) {
-    if (!state.gql) throw new Error('Noch kein GraphQL-Request der App gesehen.');
+    if (!state.gql) throw new Error('Noch keine GraphQL-Auth der App gesehen.');
     const query = state.ops[operationName] || fallbackQuery;
     if (!query) throw new Error(`Kein Query-Text für ${operationName}.`);
 
-    const res = await origFetch(state.gql.url, {
+    // Whatnot's endpoint expects the operation name in the URL as well as in the body, and a
+    // mismatch between the two is a 400 — so build the URL per call rather than reusing whatever
+    // URL happened to be captured (that mismatch is exactly what made the old harvested-URL path
+    // fail for any operation other than the one it was captured from).
+    const url = `${state.gql.url.split('?')[0]}?operationName=${encodeURIComponent(operationName)}&ssr=0`;
+
+    const res = await origFetch(url, {
       method: 'POST',
       credentials: 'include',
       headers: { ...state.gql.headers, 'content-type': 'application/json' },
@@ -185,6 +257,30 @@ mutation UpdateListing($input: ListingInput!) {
   // clicking "Sofortkauf" — the enum rejects both those guesses with a GraphQL validation error.
   const SHOP_TRANSACTION_TYPES = ['AUCTION', 'GIVEAWAY', 'BUY_IT_NOW'];
 
+  /**
+   * Fills in any `Boolean!` variable the harvested document declares but our hardcoded variables
+   * don't supply, defaulting it to false.
+   *
+   * These are Whatnot's `@include(if: $...)` feature flags, and they get added over time: shipping
+   * a new one turns every one of our calls into a hard GraphQL validation error ("Variable
+   * '$includeRandomizableFields' of required type 'Boolean!' was not provided") — confirmed live
+   * 2026-09-20, which is exactly how the listing dropdown went empty. Deriving them from the
+   * document instead of hardcoding means the next flag Whatnot adds costs nothing. False is the
+   * safe default: it only omits optional extra fields we never read. Variables with a default
+   * value in the document are left alone — the server fills those in itself.
+   */
+  function withRequiredBooleans(doc, variables) {
+    const defs = doc?.definitions?.[0]?.variableDefinitions || [];
+    const out = { ...variables };
+    for (const d of defs) {
+      const name = d.variable?.name?.value;
+      if (!name || name in out || d.defaultValue) continue;
+      const t = d.type;
+      if (t?.kind === 'NonNullType' && t.type?.name?.value === 'Boolean') out[name] = false;
+    }
+    return out;
+  }
+
   async function ensureAllListingsLoaded(livestreamId) {
     const client = window.__APOLLO_CLIENT__;
     const doc = findQueryDocument('GetSellerLiveShop');
@@ -192,10 +288,10 @@ mutation UpdateListing($input: ListingInput!) {
     await Promise.all(SHOP_TRANSACTION_TYPES.map((t) =>
       client.query({
         query: doc,
-        variables: {
+        variables: withRequiredBooleans(doc, {
           livestreamId, tab: 'ACTIVE', transactionTypes: [t], query: '',
           first: 24, after: null, includeAuctionListFields: true, includeActiveListingFields: true,
-        },
+        }),
         fetchPolicy: 'network-only',
       }).catch(() => {}) // one tab's type failing (e.g. server-side quirk) shouldn't block the others
     ));
@@ -238,7 +334,7 @@ mutation UpdateListing($input: ListingInput!) {
     const d = client && doc
       ? (await client.query({
           query: doc,
-          variables: { id: globalId, livestreamId },
+          variables: withRequiredBooleans(doc, { id: globalId, livestreamId }),
           fetchPolicy: 'network-only',
         })).data
       : await gql('GetSellerLiveListing', { id: globalId, livestreamId });

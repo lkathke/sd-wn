@@ -20,13 +20,15 @@ Stream Deck app (Elgato)                Chrome (whatnot.com tab)
   `ws` WebSocket server on port **9271** that the Chrome extension connects to.
 - **whatnot-helper/** — unpacked Chrome extension (Manifest V3), loaded via
   `chrome://extensions` → "Load unpacked" (not published anywhere). Two content scripts:
-  - `bridge.js` (`world: "MAIN"`, `document_start`) — patches `window.fetch` to harvest the
-    Whatnot web app's own GraphQL requests (URL + headers + query text), and patches
+  - `bridge.js` (`world: "MAIN"`, `document_start`) — harvests the auth headers off the Whatnot web app's own
+    Apollo link chain (see the `hookApolloAuth` section below; it also still patches
+    `window.fetch`, which the app no longer routes GraphQL through), and patches
     `WebSocket.prototype.send` to piggyback on the app's own Phoenix auction socket. This is how
     we read/write listings, shipping profiles, and start auctions **without our own auth** — we
-    reuse whatever session the logged-in seller already has. The socket multiplexes **two
-    topics** on one connection — `commerce:<livestreamId>` (`start_auction`, `pin_product`) and
-    `auction:<livestreamId>` (`start_giveaway`, `select_giveaway_winner`) — each with its own
+    reuse whatever session the logged-in seller already has. The two Phoenix topics run over **two different
+    physical connections** — `commerce:<livestreamId>` (`start_auction`,
+    `pin_product`) over `/services/auction/socket`, and `auction:<livestreamId>` (`start_giveaway`,
+    `select_giveaway_winner`) over `/services/live/socket` — each with its own
     `joinRef`, tracked in `state.channels`; `push(channel, event, payload)` picks the right one.
     Broadcast frames matching `FORWARDED_EVENTS` (the `giveaway_*` events) get relayed to
     `overlay.js` via `postMessage({ __wn: 'event', ... })` instead of only handling `phx_reply`s,
@@ -81,19 +83,42 @@ shape via `bridge.js`'s `getListingDetails` (a thin wrapper around `readListing(
 currently selected listing, and preferring that over the list cache's `shippingProfile` field when
 rendering/starting.
 
-**Tried and confirmed not to work: self-authoring a minimal replacement query.** A tempting
-shortcut — since `readListing()` needs the app to have sent the exact `GetSellerLiveListing`
-operation at least once (its query text is only ever harvested, never guessed at), we tried
-hand-authoring a tiny standards-based substitute instead: Relay's standard `node(id: ID!): Node`
-root field selecting only `shippingProfile { id name }` (a field selection already proven valid,
-since `M_UPDATE`'s own mutation response asks for exactly that). It failed live with a **400 Bad
-Request** — and the response made the reason clear: the POST URL Whatnot's endpoint expects carries
-`?operationName=<name>&ssr=0`, which comes from whatever URL got harvested (baked in at harvest
-time, not reconstructed per call), so our custom operation name in the request body never matched
-the URL's `operationName` param. That strongly suggests an operation allowlist/persisted-queries
-setup on the server side — arbitrary self-authored query documents aren't accepted even when their
-field selection is valid. **Conclusion: don't retry this approach** — harvesting the real operation
-from the app remains the only path for anything `readListing()` needs.
+**Self-authored query documents ARE accepted** (corrected 2026-09-20 — an earlier version of this
+file claimed the opposite). The old 400 Bad Request that produced that claim was never an operation
+allowlist: Whatnot's endpoint expects `?operationName=<name>&ssr=0` on the POST URL, and the old
+code reused whatever URL got harvested (baked in at harvest time), so the operation name in the
+body never matched the one in the URL. `gql()` now builds that URL per call, and a hand-written
+`query WhoAmI { me { id username } }` POSTed to `/services/graphql/` comes back 200 with the real
+logged-in user. Harvesting the app's own operation text is still preferred where it's available —
+it's guaranteed to match the current schema — but it is no longer the *only* path.
+
+**The GraphQL harvest no longer works via `window.fetch`** (broke live some time before
+2026-09-20). Whatnot's Apollo client is constructed with its own `fetch` implementation
+(`HttpLink`'s `options.fetch`, taken from a pristine realm), so the `window.fetch` patch sees
+nothing: measured live, 11 GraphQL requests in 10s and *zero* reached the patch, while
+`window.fetch` was demonstrably still ours. Re-assigning `options.fetch` afterwards doesn't help
+either — HttpLink reads that option into a closure when it's constructed. This is what turned the
+overlay's first status dot red and, downstream, emptied the shipping-profile keys on the deck
+(`getShippingProfiles()` goes through `gql()`) and silently stopped `patchListing()` from
+persisting price/shipping.
+
+What `gql()` actually needs from the app is only the **auth headers** (`authorization`,
+`accept-language`, `x-client-timezone`, `X-Whatnot-USGMT`) — cookies alone are not enough, the same
+request without them returns 200 with `me: null`. Those headers sit on every Apollo operation's
+context, put there by a middleware link upstream of the terminating `HttpLink`, so `bridge.js` now
+wraps that link's `request()` to snapshot them (`hookApolloAuth`). The client doesn't exist at
+`document_start`, so an accessor is defined on `window.__APOLLO_CLIENT__` to catch the assignment,
+with a bounded poll as a fallback. The `window.fetch` patch is kept as well — it costs nothing and
+still covers any code path that does use the global.
+
+**Whatnot adds required `Boolean!` feature-flag variables to its queries over time.**
+`GetSellerLiveShop` gained `$includeRandomizableFields: Boolean!`, which turned every
+`ensureAllListingsLoaded()` call into a hard validation error ("Variable
+'$includeRandomizableFields' of required type 'Boolean!' was not provided") and left the listing
+dropdown empty. Don't hardcode these: `withRequiredBooleans()` derives them from the harvested
+document's own `variableDefinitions` and defaults anything missing to `false` (safe — it only omits
+optional `@include` fields we never read). Variables that carry a default value in the document are
+left alone. Apply it to every `client.query()` that uses a harvested document.
 
 `readListing()`'s dependency on a harvested `GetSellerLiveListing` is real for both
 `ensureListingDetails()` and `patchListing()` (used by `Set Start Price`/`Set Shipping Method`,
