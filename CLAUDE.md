@@ -150,6 +150,85 @@ wrapping that loop in try/catch (fail soft to an empty list, matching the sugges
 branch's existing `.catch(() => [])`) and moving the retry into `overlay.js`'s
 `ensureProfilesLoaded()`, called every `refresh()` cycle on the same cooldown pattern.
 
+**A synthetic dropdown entry used to permanently cancel the shipping-profile load.**
+`ensureProfileOption()` appends the selected listing's own profile to `profiles` when
+`getShippingProfiles()` didn't return it (legacy/deleted profiles, see its comment), and
+`ensureProfilesLoaded()` guarded its retry on `profiles.length > 0`. So one synthetic entry made
+the guard think the real list had loaded, and the 4s retry never fired again — the bar sat on a
+one-option dropdown forever. Confirmed live 2026-10-08: the select held exactly `bis 900g` (a
+profile the seller no longer has) while `getShippingProfiles()` returned 11. Downstream this also
+emptied the Property Inspector's dropdown and made the Stream Deck `setShippingMethod` name lookup
+miss every real profile. Guard is now a separate `profilesLoaded` flag set only on a non-empty real
+load; synthetic entries (`synthetic: true`) are carried over across the rebuild, since dropping the
+selected listing's own `<option>` would blank the select and let `schedulePatchListing()` /
+`startAuctionFromCurrentState()` wipe its shipping profile.
+
+**`ListingImageInput` is a `@oneOf` input type — send `id` OR `key`, never both.**
+`toListingInput()` sent `{ id, key }` per image, which Whatnot used to accept and now rejects with
+"Exactly one key must be specified for OneOf type 'ListingImageInput'" (confirmed live 2026-10-08).
+This took down every `patchListing()` caller at once — Set Start Price, Set Shipping Method and the
+bar's debounced auto-save — and, less obviously, **the auction start**:
+`startAuctionFromCurrentState()` calls `setShippingProfile()` before it pushes `start_auction`, so
+the push never happened and the failure looked like "the auction button does nothing". The
+`start_auction` path itself was fine the whole time — pushing it directly, skipping the shipping
+step, started an auction normally. Both `{ id }` and `{ key }` alone are accepted (both verified
+against a real listing); `id` is preferred as the stabler identifier for an existing image.
+
+If a start ever fails again, check whether it got as far as the push at all before suspecting the
+Phoenix socket: everything `startAuctionFromCurrentState()` does *before* `startAuction` is a
+GraphQL write and fails the same silent way.
+
+**`render()` used to wipe every status and error message within 1.5s.** It rebuilds the bar's
+labels on each `refresh()` tick, including `$('meta')` and the start button's text, so all 25-odd
+transient messages (every Stream Deck command's "✓"/"Fehler: …" feedback, the start button's own
+`startet …`/`läuft ✓`/`Fehler: …`, and its two-step `Bestätigen: …` label) were overwritten almost
+immediately. Measured live: a successful start flickered `startet …` → `Auktion starten` →
+`läuft ✓` → `Auktion starten`, and the GraphQL error above could only be read by freezing it in a
+screenshot. The armed label vanishing was the worst of it — the button still *was* armed, so the
+next click fired the auction instead of arming it. Fixed with two overrides `render()` respects:
+`setMetaMessage(text, ttl)` / `renderMeta(fallback)` for the meta line (8s default, 4s for the
+giveaway entry counter so a stale count doesn't linger) and `goOverride` / `setGoText()` /
+`clearGoText()` for the button. Start errors are mirrored into the meta line as well, since the
+button is far too narrow for a GraphQL validation message.
+
+**Whatnot soft-deletes shipping profiles**, it doesn't remove them: a deleted profile keeps
+existing with `isActive: false` and stays assigned to whatever live listings already pointed at it.
+`customShippingProfiles`/`suggestedShippingProfiles` return only active ones and take no argument
+to ask for the rest (`isActive` is rejected as an unknown argument), and the app's own
+`GetSellerLiveListing` doesn't select `isActive` either. `bridge.js`'s
+`getAssignedShippingProfile()` therefore asks per listing with a self-authored
+`GetListingShippingProfileState` document. That lookup is required, not cosmetic: "missing from
+the loaded list" alone does **not** mean deleted — a listing from another category legitimately
+carries an active profile that this category's suggestions don't include, and only `isActive`
+separates the two. `overlay.js` hides soft-deleted profiles from the dropdown entirely and preselects the seller's
+first own profile in their place, writing nothing — it reaches the server on the next ordinary save,
+the same as a pick made by hand. The preselect is gated on a *confirmed* `isActive: false`, not on
+mere absence from the list, so the window before that lookup resolves can't overwrite a profile that
+turns out to be valid. The bar shows no notice about the stale assignment (asked for explicitly):
+between the preselect and that first save, what it displays is not yet what the listing holds.
+
+Hiding it makes the `<select>` blank, which every **write** path has to special-case —
+`assignedProfileHidden()` in `overlay.js`. `schedulePatchListing()` omits `shippingProfileId` from
+the patch entirely in that case (`toListingInput()` then defaults it to the listing's own current
+value, i.e. leaves it alone) and `startAuctionFromCurrentState()` skips its `setShippingProfile`
+call. Sending `null` instead would **delete** the profile, since `UpdateListing` replaces the
+listing rather than merging. Verified end-to-end: a real price patch on a listing carrying an
+inactive profile round-tripped with the profile intact.
+
+**The bar deliberately shows only the seller's own shipping profiles** (`onlyOwnProfiles()` in
+`overlay.js`, filtering on the `source: 'custom' | 'suggested'` tag `getShippingProfiles()` puts on
+each entry). Whatnot's category suggestions ("Onesie/Bodysuit", "Babysocken/-mütze", …) are noise
+for this workflow, where everything ships by weight. A suggested profile that's actually *assigned*
+to a listing still stays selectable, because `ensureProfileOption()` injects it on demand.
+
+A consequence worth knowing if suggestions are ever shown again: **`suggestedShippingProfiles` is
+category-scoped and the category is often not known yet** when `ensureProfilesLoaded()` first
+succeeds (the listing dropdown hasn't populated). Measured live on this seller: 11 profiles with a
+`categoryId`, only their 4 custom ones without — and since the load latches on first success,
+whichever state existed at that moment would be frozen in for the whole session. `customShipping
+Profiles` takes no `categoryId`, so with the custom-only filter there is nothing to reload and no
+category tracking in the code.
+
 **`shippingProfile` sits under `product` in `GetSellerLiveListing`'s response shape, not at the
 top level** — confirmed live via a temporary diagnostic log in `readListing()`. This was a real
 bug, not just a display gap: `toListingInput()`'s default (`shippingProfileId: l.shippingProfile

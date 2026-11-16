@@ -182,6 +182,30 @@ mutation UpdateListing($input: ListingInput!) {
   }
 }`;
 
+  // Whatnot SOFT-deletes shipping profiles: a deleted one keeps existing with `isActive: false`
+  // (live listings still point at it) and is simply omitted from customShippingProfiles /
+  // suggestedShippingProfiles. There's no way to ask those for the inactive ones either —
+  // `customShippingProfiles(isActive: false)` is rejected with "Unknown argument 'isActive'"
+  // (confirmed live 2026-10-08, same session that found a listing still carrying "bis 900g",
+  // isActive:false, 900 GRAM, 33×20×8 CENTIMETER, while the seller's list returned 4 active ones).
+  //
+  // The app's own GetSellerLiveListing doesn't select isActive, so ask per listing with our own
+  // document (self-authored documents are accepted, see gql()). This is the only way to tell a
+  // soft-deleted profile apart from one that's merely absent from the category-filtered
+  // suggestions but perfectly usable — overlay.js hides the former and surfaces the latter.
+  const Q_ASSIGNED_PROFILE = `
+query GetListingShippingProfileState($id: ID!) {
+  getListing(id: $id) {
+    id
+    product { shippingProfile { id name isActive } }
+  }
+}`;
+
+  async function getAssignedShippingProfile(globalId) {
+    const d = await gql('GetListingShippingProfileState', { id: globalId }, Q_ASSIGNED_PROFILE);
+    return d?.getListing?.product?.shippingProfile ?? null;
+  }
+
   async function getShippingProfiles(categoryId) {
     const suggested = await gql('GetSuggestedShippingProfiles', { categoryId }, Q_SUGGESTED)
       .then(d => (d.suggestedShippingProfiles || []).flatMap(
@@ -321,7 +345,15 @@ mutation UpdateListing($input: ListingInput!) {
       // press), since UpdateListing replaces the whole listing rather than merging.
       shippingProfileId: l.product?.shippingProfile?.id ?? l.shippingProfile?.id ?? null,
       hazmatType: l.hazmatType ?? 'NOT_HAZMAT',
-      images: (l.images || []).map(i => ({ id: i.id, key: i.key })),
+      // ListingImageInput is a @oneOf input type: EXACTLY one key may be set. Sending both — which
+      // this did, and which Whatnot used to accept — fails the entire mutation with "Exactly one
+      // key must be specified for OneOf type 'ListingImageInput'" (confirmed live 2026-10-08).
+      // That took down every patchListing() caller at once: Set Start Price, Set Shipping Method,
+      // the bar's debounced auto-save, and the auction start, which calls setShippingProfile()
+      // before it ever pushes start_auction and so never got as far as the push.
+      // `id` and `key` are both accepted on their own (both verified against this listing);
+      // prefer the id as the stabler identifier for an image that already exists.
+      images: (l.images || []).map(i => (i.id != null ? { id: i.id } : { key: i.key })),
       productAttributeValues: l.productAttributeValues ?? [],
       variants: null,
       ...patch,
@@ -531,7 +563,8 @@ mutation UpdateListing($input: ListingInput!) {
   const unpinProduct = (productUuid) => push('commerce', 'unpin_product', { productId: productUuid });
 
   const api = {
-    getShippingProfiles, getListings, getListingDetails: readListing, setShippingProfile, setStartPrice, startAuction,
+    getShippingProfiles, getAssignedShippingProfile,
+    getListings, getListingDetails: readListing, setShippingProfile, setStartPrice, startAuction,
     configureGiveaway, startGiveaway, drawGiveawayWinner, pinProduct, unpinProduct, patchListing,
     ensureAllListingsLoaded,
     status: () => ({

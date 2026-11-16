@@ -107,7 +107,52 @@ root.innerHTML = `
   </div>`;
 
 const $ = (id) => root.getElementById(id);
+
+// render() rebuilds the bar's labels on every refresh() tick (1.5s) and used to overwrite both the
+// meta line and the start button with them — so every status or error message the bar or a Stream
+// Deck key produced was gone within a second or two. Confirmed live 2026-10-08: a successful start
+// flickered "startet …" → "Auktion starten" → "läuft ✓" → "Auktion starten", and the GraphQL error
+// that actually broke the auction start could only be read by catching it in a screenshot.
+// These two overrides outlive render() until they expire or are cleared explicitly.
+let metaMessage = null, metaMessageUntil = 0;
+const META_MESSAGE_MS = 8000;
+
+function setMetaMessage(text, ttl = META_MESSAGE_MS) {
+  metaMessage = text;
+  metaMessageUntil = Date.now() + ttl;
+}
+
+function renderMeta(fallback) {
+  $('meta').textContent = metaMessage && Date.now() < metaMessageUntil ? metaMessage : fallback;
+}
+
+// The start button carries its own two-step confirm label and its "startet …"/result text. While
+// one of those is showing, render() has to leave it alone: an armed "Bestätigen: …" that reverts
+// to the idle label after 1.5s reads as "nothing happened", and the NEXT click then starts the
+// auction instead of arming it.
+let goOverride = null;
+const setGoText = (text) => { goOverride = text; $('go').textContent = text; };
+const clearGoText = (idleLabel) => { goOverride = null; $('go').textContent = idleLabel; };
 let listings = [], profiles = [], armed = false;
+// True only once a real getShippingProfiles() call came back non-empty. Deliberately NOT derived
+// from `profiles.length` — ensureProfileOption() injects synthetic entries into that same array
+// (see below), so using the length as the "already loaded" signal let a single synthetic entry
+// permanently cancel the retry in ensureProfilesLoaded(). Confirmed live: the bar sat on exactly
+// one option ("bis 900g" — a legacy profile assigned to the selected listing, not in the seller's
+// own profile list at all) while getShippingProfiles() would have returned 11 profiles.
+let profilesLoaded = false;
+
+// Only the seller's OWN shipping profiles belong in the bar. Whatnot's category suggestions
+// ("Onesie/Bodysuit", "Babysocken/-mütze", …) are noise for this workflow, where everything ships
+// by weight. getShippingProfiles() tags every entry with its source, so filter on that rather than
+// trying to recognise names. A *suggested* profile that's genuinely assigned to a listing still
+// stays selectable — ensureProfileOption() injects it on demand, see render().
+//
+// This also makes the list category-independent: customShippingProfiles takes no categoryId, so
+// there's nothing left to reload when the selected listing's category changes. (The suggestion
+// half IS category-scoped — 11 profiles with a categoryId vs. 4 without, measured live — which
+// would matter again if these ever get shown.)
+const onlyOwnProfiles = (list) => list.filter(p => p.source === 'custom');
 let activeGiveawayProductUuid = null; // set by giveaway_started, cleared on won/ended-without-winner
 // Which listing.id activeGiveawayProductUuid belongs to. Needed because activeGiveawayProductUuid
 // is a per-run instance id in a completely different id namespace than any listing/salesChannels
@@ -204,17 +249,25 @@ let profilesLoadFailedAt = 0;
 const PROFILES_LOAD_RETRY_MS = 4000;
 
 async function ensureProfilesLoaded() {
-  if (profiles.length > 0) return;
+  if (profilesLoaded) return;
   if (Date.now() - profilesLoadFailedAt < PROFILES_LOAD_RETRY_MS) return;
   try {
-    const cat = current()?.category?.id ?? current()?.categoryId;
-    profiles = await call('getShippingProfiles', cat);
-    if (profiles.length > 0) {
-      $('profile').innerHTML = profiles.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-      render();
-    } else {
-      profilesLoadFailedAt = Date.now();
-    }
+    const loaded = onlyOwnProfiles(await call('getShippingProfiles'));
+    if (loaded.length === 0) { profilesLoadFailedAt = Date.now(); return; }
+    profilesLoaded = true;
+    // Carry over the synthetic entries ensureProfileOption() added while the real list was still
+    // unavailable: one of them is typically the selected listing's own (legacy) profile, which by
+    // definition isn't in `loaded`. Dropping its <option> here would blank the select, and both
+    // schedulePatchListing() and startAuctionFromCurrentState() read that blank as "no profile"
+    // and wipe the listing's shipping profile.
+    profiles = [...loaded, ...profiles.filter(p => p.synthetic && !loaded.some(l => l.id === p.id))];
+    const keep = $('profile').value;
+    $('profile').innerHTML = profiles.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    // innerHTML resets the select's value; restore it instead of letting the browser fall back to
+    // whichever option ends up first. render() only re-applies it on its own while the user hasn't
+    // touched the field (dataset.touched), so a staged-but-unsaved pick would otherwise be swapped.
+    if (keep && profiles.some(p => p.id === keep)) $('profile').value = keep;
+    render();
   } catch {
     profilesLoadFailedAt = Date.now();
   }
@@ -226,9 +279,49 @@ async function ensureProfilesLoaded() {
 // legacy profile). Without this, `$('profile').value = <that id>` silently fails (no matching
 // <option>, select shows blank) and worse, startAuctionFromCurrentState() then sees the blank as
 // a "change" and calls setShippingProfile with an empty value, wiping the listing's profile.
+// Whatnot soft-deletes shipping profiles (isActive: false) instead of removing them, because live
+// listings keep pointing at them — so a listing can carry a profile the seller deleted long ago.
+// Those must NOT be offered in the dropdown. But "missing from `profiles`" alone doesn't mean
+// "deleted": a listing from another category can carry a perfectly active profile that just isn't
+// in this category's suggestedShippingProfiles. Only isActive distinguishes the two, and the app's
+// own listing query doesn't select it — hence the dedicated bridge call below, resolved lazily per
+// profile id and cached (a profile's isActive doesn't change under us mid-show).
+const profileActive = new Map(); // profile id -> boolean
+let profileActivePendingId = null, profileActiveFailedAt = 0;
+const PROFILE_ACTIVE_RETRY_MS = 4000;
+
+function ensureProfileActiveKnown(listingId, profileId) {
+  if (!listingId || !profileId) return;
+  if (profileActive.has(profileId) || profileActivePendingId === profileId) return;
+  if (Date.now() - profileActiveFailedAt < PROFILE_ACTIVE_RETRY_MS) return;
+  profileActivePendingId = profileId;
+  call('getAssignedShippingProfile', listingId).then((sp) => {
+    profileActivePendingId = null;
+    // Key off the id the server reports rather than the one we asked about: if the listing's
+    // profile changed in between, caching the answer under the stale id would be wrong.
+    if (sp?.id) profileActive.set(sp.id, sp.isActive !== false);
+    render();
+  }).catch(() => {
+    profileActivePendingId = null;
+    profileActiveFailedAt = Date.now(); // same cooldown/retry pattern as ensureProfilesLoaded
+  });
+}
+
+// True when the <select> is blank *only* because the listing's assigned profile is deliberately
+// not offered (soft-deleted, or its isActive lookup hasn't resolved yet) — as opposed to the
+// listing genuinely having no profile. Every write path has to check this: UpdateListing replaces
+// the listing rather than merging, so sending shippingProfileId: null here would delete a profile
+// the seller never asked to remove.
+function assignedProfileHidden() {
+  if ($('profile').value) return false;
+  const l = current();
+  const assigned = listingDetailsId === l?.id ? listingDetails?.product?.shippingProfile?.id : undefined;
+  return !!assigned && !profiles.some(p => p.id === assigned);
+}
+
 function ensureProfileOption(id, name) {
   if (!id || !name || profiles.some(p => p.id === id)) return;
-  profiles = [...profiles, { id, name }];
+  profiles = [...profiles, { id, name, synthetic: true }];
   const opt = document.createElement('option');
   opt.value = id;
   opt.textContent = name;
@@ -372,7 +465,7 @@ function render() {
   // Preis/Versand/Dauer/Modus sind Auktions-only — bei einem Giveaway-Listing überträgt der Start
   // nur die Produkt-UUID, keine dieser Felder (siehe Doku Teil A.1).
   for (const id of ['price', 'duration', 'bump', 'mode']) $(id).closest('.field').style.display = giveaway ? 'none' : '';
-  $('go').textContent = giveaway ? 'Giveaway starten' : 'Auktion starten';
+  $('go').textContent = goOverride ?? (giveaway ? 'Giveaway starten' : 'Auktion starten');
   $('win').disabled = !(giveaway && activeGiveawayProductUuid && l.id === activeGiveawayListingId);
 
   // Shipping profile sync applies to BOTH auction and giveaway listings — a giveaway listing
@@ -381,13 +474,33 @@ function render() {
   // shippingProfile sits under `product` in GetSellerLiveListing's response shape, not at the
   // top level — confirmed live via readListing()'s diagnostic log.
   const detailedProfile = listingDetailsId === l.id ? listingDetails?.product?.shippingProfile : undefined;
-  ensureProfileOption(detailedProfile?.id, detailedProfile?.name);
+  if (detailedProfile?.id && !profiles.some(x => x.id === detailedProfile.id)) {
+    ensureProfileActiveKnown(l.id, detailedProfile.id);
+  }
+  // Only surface a profile that's missing from the loaded list once it's confirmed still active.
+  // Soft-deleted ones stay out of the dropdown entirely (see assignedProfileHidden above).
+  if (profileActive.get(detailedProfile?.id) === true) {
+    ensureProfileOption(detailedProfile.id, detailedProfile.name);
+  }
   // Deliberately NOT falling back to l.shippingProfile (the list-cache's own copy of this field)
   // while detailedProfile hasn't loaded yet — confirmed live that fallback briefly showed a wrong
   // profile (e.g. during rapid Adjust Start Price presses, before ensureListingDetails' fetch for
   // this listing had resolved) that then "corrected itself" a moment later. Leaving the field blank
   // during that window is confusing for a frame but never wrong, unlike a stale/incorrect guess.
   if (!$('profile').dataset.touched) $('profile').value = detailedProfile?.id ?? '';
+
+  // The listing's assigned profile is soft-deleted, so it's not in the dropdown and the line above
+  // left the field blank — an empty field is useless during a show. Preselect the seller's first
+  // own profile instead. Deliberately NOT written to the listing here: it reaches the server the
+  // next time something saves anyway (price edit, auction start), exactly like a pick made by
+  // hand. Gated on a *confirmed*
+  // isActive:false rather than mere absence from `profiles`, so the brief window before that
+  // lookup resolves can't preselect over a profile that turns out to be perfectly valid.
+  const staleAssigned = detailedProfile && profileActive.get(detailedProfile.id) === false
+    ? detailedProfile
+    : null;
+  if (staleAssigned && !$('profile').value && profiles.length > 0) $('profile').value = profiles[0].id;
+
   const p = profiles.find(x => x.id === $('profile').value);
   const shippingLabel = p
     // Synthetic fallback entries (see ensureProfileOption) only carry id+name, not the full
@@ -400,14 +513,14 @@ function render() {
   if (giveaway) {
     const g = l.transactionProps?.giveaway;
     const intl = g && !g.onlyDomestic;
-    $('meta').textContent = `🎁 ${eligibilityLabel(l)} · ${intl ? 'international' : 'nur national'}`
-      + (activeGiveawayProductUuid ? ' · läuft' : '') + ` · ${shippingLabel}`;
+    renderMeta(`🎁 ${eligibilityLabel(l)} · ${intl ? 'international' : 'nur national'}`
+      + (activeGiveawayProductUuid ? ' · läuft' : '') + ` · ${shippingLabel}`);
     sendOverlayState();
     return;
   }
 
   if (!$('price').dataset.touched) $('price').value = (l.price.amount / 100).toFixed(2);
-  $('meta').textContent = shippingLabel;
+  renderMeta(shippingLabel);
 
   sendOverlayState();
 }
@@ -435,10 +548,12 @@ async function startAuctionFromCurrentState() {
   // a needed one.
   const detailedShippingId = listingDetailsId === l.id ? listingDetails?.product?.shippingProfile?.id : undefined;
   const knownShippingId = detailedShippingId ?? '';
-  // render() already injected a synthetic <option> for this id if it wasn't among the
-  // suggested/custom profiles — see ensureProfileOption — so $('profile').value reliably matches
-  // knownShippingId here instead of falling back to '' and wiping the profile below.
-  if ($('profile').value !== knownShippingId) {
+  // render() injects a synthetic <option> for this id when it isn't among the suggested/custom
+  // profiles but is still active (see ensureProfileOption), so $('profile').value matches
+  // knownShippingId rather than falling back to '' and wiping the profile below. A soft-deleted
+  // profile is deliberately NOT injected, which leaves the field blank — assignedProfileHidden()
+  // catches exactly that case so the auction starts on the existing profile instead of none.
+  if (!assignedProfileHidden() && $('profile').value !== knownShippingId) {
     await call('setShippingProfile', l.id, LIVESTREAM_ID, $('profile').value);
   }
   await call('startAuction', {
@@ -507,31 +622,34 @@ $('go').addEventListener('click', async () => {
 
   if (!armed) {
     armed = true;
-    $('go').textContent = label;
-    setTimeout(() => { armed = false; $('go').textContent = idleLabel; }, 6000);
+    setGoText(label);
+    setTimeout(() => { if (armed) { armed = false; clearGoText(idleLabel); } }, 6000);
     return;
   }
 
   armed = false;
   $('go').disabled = true;
-  $('go').textContent = 'startet …';
+  setGoText('startet …');
   try {
     await (giveaway ? startGiveawayFromCurrentState() : startAuctionFromCurrentState());
-    $('go').textContent = 'läuft ✓';
+    setGoText('läuft ✓');
   } catch (e) {
-    $('go').textContent = 'Fehler: ' + e.message;
+    setGoText('Fehler: ' + e.message);
+    // The button is far too narrow for a GraphQL validation error — mirror it into the meta line,
+    // which wraps, so it's actually readable (and stays put, see setMetaMessage).
+    setMetaMessage('Fehler: ' + e.message);
   } finally {
-    setTimeout(() => { $('go').disabled = false; $('go').textContent = idleLabel; }, 3000);
+    setTimeout(() => { $('go').disabled = false; clearGoText(idleLabel); }, 3000);
   }
 });
 
 $('win').addEventListener('click', async () => {
   $('win').disabled = true;
-  $('meta').textContent = 'zieht Gewinner …';
+  setMetaMessage('zieht Gewinner …');
   try {
     await drawGiveawayWinnerFromCurrentState();
   } catch (e) {
-    $('meta').textContent = 'Fehler: ' + e.message;
+    setMetaMessage('Fehler: ' + e.message);
     $('win').disabled = false;
   }
 });
@@ -554,7 +672,7 @@ window.addEventListener('message', (e) => {
       break;
     case 'giveaway_entry_count_updated': {
       const count = payload?.entryCount ?? payload?.entry_count;
-      if (count != null) $('meta').textContent = `🎁 läuft · ${count} Teilnehmer`;
+      if (count != null) setMetaMessage(`🎁 läuft · ${count} Teilnehmer`, 4000);
       break;
     }
     case 'giveaway_won':
@@ -636,7 +754,10 @@ function schedulePatchListing() {
   if (!l) return;
   clearTimeout(patchDebounceTimer);
   patchDebounceTimer = setTimeout(() => {
-    const patch = { shippingProfileId: $('profile').value || null };
+    // Omit shippingProfileId entirely while the assigned profile is hidden — toListingInput()
+    // then defaults it to the listing's own current value, i.e. leaves it untouched. Sending null
+    // would delete it (UpdateListing replaces, never merges).
+    const patch = assignedProfileHidden() ? {} : { shippingProfileId: $('profile').value || null };
     // Giveaways have a real shippingProfile (see render()'s comment) but no editable price in
     // this bar (the field's hidden and its value is stale/irrelevant for a giveaway selection) —
     // omitting price from the patch leaves toListingInput() default to the listing's own current
@@ -647,7 +768,7 @@ function schedulePatchListing() {
       patch.price = { amount: cents, currency: 'EUR' };
     }
     call('patchListing', l.id, LIVESTREAM_ID, patch)
-      .catch((e) => { $('meta').textContent = 'Fehler beim Speichern: ' + e.message; });
+      .catch((e) => { setMetaMessage('Fehler beim Speichern: ' + e.message); });
   }, PATCH_DEBOUNCE_MS);
 }
 
@@ -897,9 +1018,11 @@ function seedGiveawayTabOnce() {
     try {
       switch (request.type) {
         case 'getShippingProfiles':
-          result = profiles.length
+          // Same distinction as ensureProfilesLoaded(): a non-empty `profiles` may consist of
+          // nothing but synthetic entries, which would hand the Property Inspector a 1-item list.
+          result = profilesLoaded
             ? profiles
-            : await call('getShippingProfiles', current()?.category?.id ?? current()?.categoryId);
+            : onlyOwnProfiles(await call('getShippingProfiles'));
           break;
         case 'getListings':
           result = listings.length ? listings : await call('getListings');
@@ -923,7 +1046,7 @@ function seedGiveawayTabOnce() {
 
     switch (command.type) {
       case 'setStartPrice': {
-        if (!selectListingForType(false)) { $('meta').textContent = 'Kein Auktionsartikel vorhanden'; return; }
+        if (!selectListingForType(false)) { setMetaMessage('Kein Auktionsartikel vorhanden'); return; }
         const price = parseFloat(command.price);
         if (Number.isNaN(price)) return;
         $('price').value = price.toFixed(2);
@@ -937,14 +1060,14 @@ function seedGiveawayTabOnce() {
         // AdjustShippingMethod/CurrentShippingDisplay's `target` setting in the Stream Deck plugin).
         const wantGiveaway = command.target === 'giveaway';
         if (!selectListingForType(wantGiveaway)) {
-          $('meta').textContent = wantGiveaway ? 'Kein Giveaway-Artikel vorhanden' : 'Kein Auktionsartikel vorhanden';
+          setMetaMessage(wantGiveaway ? 'Kein Giveaway-Artikel vorhanden' : 'Kein Auktionsartikel vorhanden');
           return;
         }
         const label = String(command.label ?? '').trim().toLowerCase();
         const match = profiles.find(p => p.name.toLowerCase() === label)
           ?? profiles.find(p => p.name.toLowerCase().includes(label));
         if (!match) {
-          $('meta').textContent = `Kein Versandprofil für „${command.label}" gefunden`;
+          setMetaMessage(`Kein Versandprofil für „${command.label}" gefunden`);
           return;
         }
         $('profile').dataset.touched = '1';
@@ -955,7 +1078,7 @@ function seedGiveawayTabOnce() {
         break;
       }
       case 'setAuctionDuration': {
-        if (!selectListingForType(false)) { $('meta').textContent = 'Kein Auktionsartikel vorhanden'; return; }
+        if (!selectListingForType(false)) { setMetaMessage('Kein Auktionsartikel vorhanden'); return; }
         const seconds = parseInt(command.seconds, 10);
         if (!Number.isFinite(seconds)) return;
         const select = $('duration');
@@ -970,7 +1093,7 @@ function seedGiveawayTabOnce() {
             Math.abs(parseInt(b.value, 10) - seconds) < Math.abs(parseInt(a.value, 10) - seconds) ? b : a
           );
           select.value = nearest.value;
-          $('meta').textContent = `Keine ${seconds}s-Option – nächstliegender Wert (${nearest.value}s) gewählt`;
+          setMetaMessage(`Keine ${seconds}s-Option – nächstliegender Wert (${nearest.value}s) gewählt`);
         }
         saveListingPref(current()?.id, { durationSeconds: +select.value });
         pulseBar();
@@ -979,7 +1102,7 @@ function seedGiveawayTabOnce() {
       case 'selectListing': {
         const match = listings.find(l => l.id === command.listingId);
         if (!match) {
-          $('meta').textContent = `Artikel-ID „${command.listingId}" nicht in der aktuellen Liste gefunden`;
+          setMetaMessage(`Artikel-ID „${command.listingId}" nicht in der aktuellen Liste gefunden`);
           return;
         }
         selectListingById(match.id);
@@ -987,7 +1110,7 @@ function seedGiveawayTabOnce() {
         break;
       }
       case 'startAuction': {
-        if (!selectListingForType(false)) { $('meta').textContent = 'Kein Auktionsartikel vorhanden'; return; }
+        if (!selectListingForType(false)) { setMetaMessage('Kein Auktionsartikel vorhanden'); return; }
         // Optional per-key configured bump time (Start Auction button's own settings) — applied
         // right before starting, same nearest-preset fallback as setAuctionDuration, so a value
         // that doesn't exactly match one of the <select>'s options still lands on the closest one
@@ -1003,12 +1126,12 @@ function seedGiveawayTabOnce() {
           saveListingPref(current()?.id, { bumpSeconds: +select.value });
         }
         startAuctionFromCurrentState()
-          .then(() => { $('meta').textContent = 'Auktion gestartet ✓'; pulseBar(); })
-          .catch((e) => { $('meta').textContent = 'Fehler beim Auktionsstart: ' + e.message; });
+          .then(() => { setMetaMessage('Auktion gestartet ✓'); pulseBar(); })
+          .catch((e) => { setMetaMessage('Fehler beim Auktionsstart: ' + e.message); });
         break;
       }
       case 'setAuctionMode': {
-        if (!selectListingForType(false)) { $('meta').textContent = 'Kein Auktionsartikel vorhanden'; return; }
+        if (!selectListingForType(false)) { setMetaMessage('Kein Auktionsartikel vorhanden'); return; }
         const mode = command.mode === 'suddenDeath' ? 'suddenDeath' : 'standard';
         $('mode').value = mode;
         saveListingPref(current()?.id, { mode });
@@ -1016,31 +1139,31 @@ function seedGiveawayTabOnce() {
         break;
       }
       case 'startGiveaway': {
-        if (!selectListingForType(true)) { $('meta').textContent = 'Kein Giveaway-Artikel vorhanden'; return; }
+        if (!selectListingForType(true)) { setMetaMessage('Kein Giveaway-Artikel vorhanden'); return; }
         startGiveawayFromCurrentState()
-          .then(() => { $('meta').textContent = 'Giveaway gestartet ✓'; pulseBar(); })
-          .catch((e) => { $('meta').textContent = 'Fehler beim Giveaway-Start: ' + e.message; });
+          .then(() => { setMetaMessage('Giveaway gestartet ✓'); pulseBar(); })
+          .catch((e) => { setMetaMessage('Fehler beim Giveaway-Start: ' + e.message); });
         break;
       }
       case 'drawGiveawayWinner': {
-        if (!selectListingForType(true)) { $('meta').textContent = 'Kein Giveaway-Artikel vorhanden'; return; }
+        if (!selectListingForType(true)) { setMetaMessage('Kein Giveaway-Artikel vorhanden'); return; }
         drawGiveawayWinnerFromCurrentState()
           .then(() => { pulseBar(); })
-          .catch((e) => { $('meta').textContent = 'Fehler beim Gewinner ziehen: ' + e.message; });
+          .catch((e) => { setMetaMessage('Fehler beim Gewinner ziehen: ' + e.message); });
         break;
       }
       case 'pinListing': {
-        if (!selectListingForType(false)) { $('meta').textContent = 'Kein Auktionsartikel vorhanden'; return; }
+        if (!selectListingForType(false)) { setMetaMessage('Kein Auktionsartikel vorhanden'); return; }
         pinListingFromCurrentState()
-          .then(() => { $('meta').textContent = 'Angepinnt ✓'; pulseBar(); })
-          .catch((e) => { $('meta').textContent = 'Fehler beim Anpinnen: ' + e.message; });
+          .then(() => { setMetaMessage('Angepinnt ✓'); pulseBar(); })
+          .catch((e) => { setMetaMessage('Fehler beim Anpinnen: ' + e.message); });
         break;
       }
       case 'unpinListing': {
-        if (!selectListingForType(false)) { $('meta').textContent = 'Kein Auktionsartikel vorhanden'; return; }
+        if (!selectListingForType(false)) { setMetaMessage('Kein Auktionsartikel vorhanden'); return; }
         unpinListingFromCurrentState()
-          .then(() => { $('meta').textContent = 'Abgepinnt'; pulseBar(); })
-          .catch((e) => { $('meta').textContent = 'Fehler beim Abpinnen: ' + e.message; });
+          .then(() => { setMetaMessage('Abgepinnt'); pulseBar(); })
+          .catch((e) => { setMetaMessage('Fehler beim Abpinnen: ' + e.message); });
         break;
       }
       case 'cycleArticle': {
@@ -1051,7 +1174,7 @@ function seedGiveawayTabOnce() {
         const wantGiveaway = command.kind === 'giveaway';
         const ofType = listings.filter(x => isGiveaway(x) === wantGiveaway);
         if (ofType.length === 0) {
-          $('meta').textContent = wantGiveaway ? 'Kein Giveaway-Artikel vorhanden' : 'Kein Auktionsartikel vorhanden';
+          setMetaMessage(wantGiveaway ? 'Kein Giveaway-Artikel vorhanden' : 'Kein Auktionsartikel vorhanden');
           return;
         }
         const current_ = resolveListingForType(wantGiveaway);
